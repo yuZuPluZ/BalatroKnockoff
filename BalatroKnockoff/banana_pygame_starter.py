@@ -1,23 +1,59 @@
 # Banana (Balatro‑like) — Pygame Enhanced
-# One‑file prototype with Jokers, Upgrades, Shop, light animations, and High Score (JSON).
+# One‑file prototype with Jokers, Upgrades, Shop, and High Score (JSON).
 # --- What’s new ---
 # ✓ Joker system (Strategy pattern)  ✓ Upgrades (hand size, redraws, joker slots)
 # ✓ Simple Shop UI (press S at any time; auto‑opens after clearing goal)  ✓ Coins from scoring
-# ✓ Tiny animations (discard fly‑away, score pop)  ✓ High Score save/load (banana_highscores.json)
+# ✓ High Score save/load (banana_highscores.json)
 #
 # Controls:
-#   Use on-screen buttons or keys: N new run | D deal | Click select cards | R redraw | P play hand | Q/ESC quit
-#   Undo: Use Undo button to revert last play action (stack-based)
+#   Use on-screen buttons: New Run, Deal, Play, Redraw, Quit
 #
 # Notes:
 # - Keep it simple/robust for classroom demos; feel free to tweak numbers easily.
 #
 # Data Structures Demonstrated (for Data Structure course):
-# - Queue (collections.deque): Deck for FIFO draw operations (O(1) popleft for efficiency)
-# - Stack (list): Discard pile for LIFO toss operations, Undo system for LIFO state management
-# - Hash Table (collections.Counter): Hand evaluation for O(1) counting of ranks/suits
+# - Queue (Deque): Deck for FIFO draw operations (O(n) popleft using list shift)
+# - Stack (list): Discard pile for LIFO toss operations
+# - Hash Table (Counter): Hand evaluation for O(1) average counting of ranks/suits
 # - Set: Uniqueness checks in poker hand detection (e.g., straight, royal flush)
-# - Deque: Animation event queues for FIFO processing of visual effects
+
+"""
+Data Structures Summary for Course Submission:
+
+This program implements a Balatro-inspired card game to demonstrate data structures.
+All DS are custom-built from Python primitives (lists/dicts) to show internal mechanics.
+
+- Deque (Custom Class):
+  - Purpose: FIFO queue for card deck.
+  - Implementation: Uses a list; append() is O(1), popleft() is O(n) due to element shifting.
+  - Why Custom: Demonstrates queue internals; real deque would be O(1) with linked list.
+  - Usage: Deck.draw()
+
+- Counter (Custom Class):
+  - Purpose: Hash table for counting card ranks/suits in hand evaluation.
+  - Implementation: Inherits from dict; manual increment for O(1) average access.
+  - Why Custom: Shows hash table behavior without library dependency.
+  - Usage: eval_hand() for poker hand detection.
+
+- DefaultDict (Custom Class):
+  - Purpose: Dictionary with automatic default values for grouping.
+  - Implementation: Subclasses dict with __missing__ for auto-creation.
+  - Why Custom: Avoids KeyError in grouping operations.
+  - Usage: Deck view for sorting cards by suit.
+
+- List (Built-in):
+  - Purpose: Stack for discard pile (LIFO) and undo system.
+  - Why: Simple, efficient for small stacks; demonstrates LIFO without custom class.
+  - Usage: Deck.toss().
+
+- Set (Built-in):
+  - Purpose: Uniqueness checks in straight/royal flush detection.
+  - Why: Fast membership testing (O(1) average).
+  - Usage: _is_straight(), _is_royal().
+
+Overall: Code emphasizes DS efficiency, trade-offs (e.g., O(n) vs. O(1)), and practical application.
+Run with: python banana_pygame_starter.py
+"""
 
 import pygame
 import sys
@@ -26,9 +62,51 @@ import json
 import os
 from dataclasses import dataclass, field
 from typing import List, Dict, Tuple, Optional
-from collections import deque, Counter, defaultdict
 from copy import deepcopy
 
+# Custom Data Structures (implemented from scratch for DS course demonstration)
+class Deque:
+    """Custom deque implementation using a list for FIFO operations.
+    Uses a list for storage; popleft shifts elements for FIFO behavior (O(n) time)."""
+    def __init__(self, iterable=None):
+        self.items = list(iterable) if iterable else []
+    
+    def append(self, item):
+        self.items.append(item)
+    
+    def popleft(self):
+        if not self.items:
+            raise IndexError("pop from empty deque")
+        return self.items.pop(0)  # Shift elements (O(n))
+    
+    def __len__(self):
+        return len(self.items)
+    
+    def __iter__(self):
+        return iter(self.items)
+
+class Counter(dict):
+    """Custom counter implementation using a dict for counting.
+    Inherits from dict; increments counts manually for hash table behavior."""
+    def __init__(self, iterable=None):
+        super().__init__()
+        if iterable:
+            for item in iterable:
+                self[item] = self.get(item, 0) + 1
+    
+    def __missing__(self, key):
+        return 0  # For safe access like Counter
+
+class DefaultDict(dict):
+    """Custom defaultdict implementation using a dict with factory.
+    Auto-creates values using default_factory for missing keys."""
+    def __init__(self, default_factory):
+        super().__init__()
+        self.default_factory = default_factory
+    
+    def __missing__(self, key):
+        self[key] = self.default_factory()
+        return self[key]
 # Balatro-like blind goals per round
 BLIND_GOALS = [
     300,   # Round 1: Small Blind Ante 1
@@ -82,14 +160,18 @@ class Card:
 
 @dataclass
 class Deck:
-    # Using deque as a queue for efficient FIFO draw operations (O(1) popleft)
+    # Using Deque as a queue for FIFO draw operations (O(n) popleft)
     # This demonstrates queue data structure usage in card drawing
-    cards: deque = field(default_factory=deque)
+    cards: Deque = field(default_factory=Deque)
     discard: List[Card] = field(default_factory=list)
     rng: random.Random = field(default_factory=random.Random)
 
     def build_standard(self):
-        self.cards = deque([Card(s, r) for s in SUITS for r in RANKS])
+        cards_list = []
+        for s in SUITS:
+            for r in RANKS:
+                cards_list.append(Card(s, r))
+        self.cards = Deque(cards_list)
         self.discard.clear()
         self.shuffle()
 
@@ -97,15 +179,13 @@ class Deck:
         # Convert to list for shuffling, then back to deque
         temp = list(self.cards)
         self.rng.shuffle(temp)
-        self.cards = deque(temp)
+        self.cards = Deque(temp)
 
     def draw(self, n: int) -> List[Card]:
         out = []
         for _ in range(n):
             if not self.cards:
-                self._recycle()
-            if not self.cards:
-                break
+                break  # No recycling during round; discarded cards stay out
             out.append(self.cards.popleft())  # O(1) FIFO dequeue
         return out
 
@@ -117,8 +197,7 @@ class Deck:
     def _recycle(self):
         if not self.discard:
             return
-        # Pop from stack (LIFO) to demonstrate stack operations
-        self.cards = deque()
+        # Add discarded cards back to deck
         while self.discard:
             self.cards.append(self.discard.pop())
         self.shuffle()
@@ -171,8 +250,17 @@ def eval_hand(cards: List[Card]) -> Tuple[str, int, float]:
     if n == 0:
         return ("Incomplete", 0, 0.0)
 
-    vals = sorted([c.value() for c in cards])
-    vals_ace_low = sorted([1 if c.rank == "A" else c.value() for c in cards])
+    vals = []
+    for c in cards:
+        vals.append(c.value())
+    vals = sorted(vals)
+    vals_ace_low = []
+    for c in cards:
+        if c.rank == "A":
+            vals_ace_low.append(1)
+        else:
+            vals_ace_low.append(c.value())
+    vals_ace_low = sorted(vals_ace_low)
     # Using Counter (hash table) for efficient counting operations
     rank_counts = Counter(c.rank for c in cards)
     suit_counts = Counter(c.suit for c in cards)
@@ -392,7 +480,7 @@ class Player:
     deck: Deck
     hand: Hand = field(default_factory=Hand)
     jokers: List[Joker] = field(default_factory=list)
-    joker_slots: int = 3
+    joker_slots: int = 5
     score: int = 0
     coins: int = 0
     upgrades: Upgrades = field(default_factory=Upgrades)
@@ -410,7 +498,11 @@ class Player:
 class RoundRules:
     score_goal: int = 300
     hands_remaining: int = 5
-    redraw_remaining: int = 5
+    redraw_remaining: int = 10
+
+    @classmethod
+    def reset_round_values(cls):
+        return {'hands_remaining': 5, 'redraw_remaining': 10}
 
 @dataclass
 class Game:
@@ -422,10 +514,14 @@ class Game:
     def new_round(self):
         # Reset round score at the start of every new round
         self.player.score = 0
-        self.rules.hands_remaining = 3
-        self.rules.redraw_remaining = 5
-        # Reset deck to standard for each round
-        self.player.deck.build_standard()
+        reset_vals = RoundRules.reset_round_values()
+        self.rules.hands_remaining = reset_vals['hands_remaining']
+        self.rules.redraw_remaining = reset_vals['redraw_remaining']
+        # Recycle discarded cards into deck for next round
+        self.player.deck._recycle()
+        # If no discarded cards, build standard deck
+        if not self.player.deck.cards:
+            self.player.deck.build_standard()
         # score_goal not changed here
 
 # ------------------------ Pygame Frontend ------------------------
@@ -444,6 +540,8 @@ BLACK = (34, 34, 34)
 BLUE = (66, 135, 245)
 GREEN = (74, 201, 133)
 YELLOW = (240, 206, 88)
+PURPLE = (180, 102, 255)
+
 
 HS_FILE = "banana_highscores.json"
 
@@ -458,6 +556,26 @@ class App:
         self.small = pygame.font.SysFont("Segoe UI", 18)
 
         self.rng = random.Random()
+        self.rng = random.Random()
+        self.full_joker_pool = [
+            (BaseJoker, {}, 10, "Joker", "+4 Mult"),
+            (GreedyJoker, {}, 15, "Greedy Joker", "+4 Mult when a Diamond is played"),
+            (LustyJoker, {}, 15, "Lusty Joker", "+4 Mult when a Heart is played"),
+            (WrathfulJoker, {}, 15, "Wrathful Joker", "+4 Mult when a Spade is played"),
+            (GluttonousJoker, {}, 15, "Gluttonous Joker", "+4 Mult when a Club is played"),
+            (JollyJoker, {}, 20, "Jolly Joker", "+8 Mult if the hand is a Pair"),
+            (ZanyJoker, {}, 25, "Zany Joker", "+8 Mult if the hand is a Three of a Kind"),
+            (MadJoker, {}, 30, "Mad Joker", "+20 Mult if the hand is a Four of a Kind"),
+            (TheMaskJoker, {}, 20, "The Mask", "+5 Mult"),
+            (CrazyJoker, {}, 25, "Crazy Joker", "+12 Mult if the hand is a Straight"),
+            (DrollJoker, {}, 25, "Droll Joker", "+10 Mult if the hand is a Flush"),
+            (SlyJoker, {}, 20, "Sly Joker", "+50 Chips if the hand is a Pair"),
+            (WilyJoker, {}, 25, "Wily Joker", "+100 Chips if the hand is a Three of a Kind"),
+            (CleverJoker, {}, 30, "Clever Joker", "+150 Chips if the hand is a Four of a Kind"),
+            (DeviousJoker, {}, 25, "Devious Joker", "+100 Chips if the hand is a Straight"),
+            (CraftyJoker, {}, 25, "Crafty Joker", "+80 Chips if the hand is a Flush"),
+        ]
+        self.joker_deck = self.full_joker_pool.copy()
         self.deck = Deck(rng=self.rng)
         self.deck.build_standard()
         self.player = Player(deck=self.deck)
@@ -465,19 +583,14 @@ class App:
         self.game = Game(player=self.player)
 
         self.selected: List[int] = []
-        self.message = "Use buttons or keys: N new, D deal, R redraw, P play."
+        self.message = "Use buttons: New Run, Deal, Play, Redraw."
         self.sort_mode = "rank"  # "rank" or "suit"
-        # Using deque as queues for animation events (FIFO processing)
-        self.anim_discard = deque()  # (rect, t)
-        self.anim_score = deque()  # (text, pos, t)
         self.shop_items = []  # list of ShopItem
         self.shop_rects: List[pygame.Rect] = []
-        self.undo_stack = []  # stack for undo functionality (LIFO)
         self.shop_available = False
         self.close_button_rect = pygame.Rect(W//2 - 100, H - 60, 200, 40)
         self.close_deck_button_rect = pygame.Rect(W//2 - 100, H - 60, 200, 40)
         self.load_highscores()
-        self.bought_jokers = self.load_bought_jokers()  # list of bought joker class names
         self.setup_buttons()
 
     def setup_buttons(self):
@@ -491,32 +604,11 @@ class App:
             {"text": "Play", "rect": pygame.Rect(40 + 2*(button_w + gap), button_y, button_w, button_h), "action": lambda: (self.deal_up_to_full(), self.play_hand())},
             {"text": "Redraw", "rect": pygame.Rect(40 + 3*(button_w + gap), button_y, button_w, button_h), "action": self.redraw},
             {"text": "Sort", "rect": pygame.Rect(40 + 4*(button_w + gap), button_y, button_w, button_h), "action": self.toggle_sort},
-            {"text": "Undo", "rect": pygame.Rect(40 + 5*(button_w + gap), button_y, button_w, button_h), "action": self.undo},
-            {"text": "Deck", "rect": pygame.Rect(40 + 6*(button_w + gap), button_y, button_w, button_h), "action": lambda: self.open_deck() if self.game.mode == "PLAY" else self.close_deck()},
-            {"text": "Quit", "rect": pygame.Rect(40 + 7*(button_w + gap), button_y, button_w, button_h), "action": lambda: (pygame.quit(), sys.exit(0))},
+            {"text": "Deck", "rect": pygame.Rect(40 + 5*(button_w + gap), button_y, button_w, button_h), "action": lambda: self.open_deck() if self.game.mode == "PLAY" else self.close_deck()},
+            {"text": "Quit", "rect": pygame.Rect(40 + 6*(button_w + gap), button_y, button_w, button_h), "action": lambda: (pygame.quit(), sys.exit(0))},
         ]
 
-    def undo(self):
-        # Stack-based undo: pop last state and restore
-        if not self.undo_stack:
-            self.message = "Nothing to undo"
-            return
-        state = self.undo_stack.pop()
-        self.player = state['player']
-        self.game = state['game']
-        self.deck = state['deck']
-        self.selected = state['selected']
-        self.message = "Undid last action"
 
-    def get_state(self):
-        # Capture current game state for undo
-        return {
-            'player': deepcopy(self.player),
-            'game': deepcopy(self.game),
-            'deck': deepcopy(self.deck),
-            'selected': self.selected[:],
-            'message': self.message
-        }
 
     def toggle_sort(self):
         self.sort_mode = "suit" if self.sort_mode == "rank" else "rank"
@@ -543,19 +635,6 @@ class App:
         except Exception:
             pass
 
-    def load_bought_jokers(self):
-        try:
-            with open("banana_bought_jokers.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return []
-
-    def save_bought_jokers(self):
-        try:
-            with open("banana_bought_jokers.json", "w", encoding="utf-8") as f:
-                json.dump(self.bought_jokers, f, ensure_ascii=False, indent=2)
-        except Exception:
-            pass
 
     # ---------------------- Layout/Helpers -------------------
     def layout_hand(self) -> List[pygame.Rect]:
@@ -580,8 +659,7 @@ class App:
             self.player.hand.sort_by_suit()
         # "none" does nothing - keeps original order
 
-    def add_score_pop(self, text: str, pos: Tuple[int,int]):
-        self.anim_score.append((text, pos, 1.0))  # 1s lifetime
+
 
     # ---------------------- Shop System ---------------------
     @dataclass
@@ -600,7 +678,7 @@ class App:
         self.shop_items = self.roll_shop()
         self.build_shop_layout()
         self.game.mode = "SHOP"
-        self.message = "Shop: click item to buy, or press S to close"
+        self.message = "Shop: click item to buy, or use Close Shop button"
 
 
     def close_shop(self):
@@ -623,38 +701,22 @@ class App:
     
     def roll_shop(self):
         items = []
-        # Jokers pool - unique, remove bought ones
-        full_joker_pool = [
-            (BaseJoker, {}, 10, "Joker", "+4 Mult"),
-            (GreedyJoker, {}, 15, "Greedy Joker", "+4 Mult when a Diamond is played"),
-            (LustyJoker, {}, 15, "Lusty Joker", "+4 Mult when a Heart is played"),
-            (WrathfulJoker, {}, 15, "Wrathful Joker", "+4 Mult when a Spade is played"),
-            (GluttonousJoker, {}, 15, "Gluttonous Joker", "+4 Mult when a Club is played"),
-            (JollyJoker, {}, 20, "Jolly Joker", "+8 Mult if the hand is a Pair"),
-            (ZanyJoker, {}, 25, "Zany Joker", "+8 Mult if the hand is a Three of a Kind"),
-            (MadJoker, {}, 30, "Mad Joker", "+20 Mult if the hand is a Four of a Kind"),
-    (TheMaskJoker, {}, 20, "The Mask", "+5 Mult"),
-            (CrazyJoker, {}, 25, "Crazy Joker", "+12 Mult if the hand is a Straight"),
-            (DrollJoker, {}, 25, "Droll Joker", "+10 Mult if the hand is a Flush"),
-            (SlyJoker, {}, 20, "Sly Joker", "+50 Chips if the hand is a Pair"),
-            (WilyJoker, {}, 25, "Wily Joker", "+100 Chips if the hand is a Three of a Kind"),
-            (CleverJoker, {}, 30, "Clever Joker", "+150 Chips if the hand is a Four of a Kind"),
-            (DeviousJoker, {}, 25, "Devious Joker", "+100 Chips if the hand is a Straight"),
-            (CraftyJoker, {}, 25, "Crafty Joker", "+80 Chips if the hand is a Flush"),
-        ]
-        joker_pool = [t for t in full_joker_pool if t[0].__name__ not in self.bought_jokers]
+        # Jokers pool - unique, from current joker_deck
+        joker_pool = self.joker_deck.copy()
         # Upgrades pool
-        up_pool = [
+        upgrade_pool = [
             ("Hand +1", "+1 card hand size (permanent this run)", 40, lambda: setattr(self.player.upgrades, "hand_size_bonus", self.player.upgrades.hand_size_bonus+1)),
             ("Redraw +1", "+1 redraw each round", 30, lambda: setattr(self.player.upgrades, "redraw_bonus", self.player.upgrades.redraw_bonus+1)),
             ("Joker Slot +1", "+1 joker slot", 50, lambda: setattr(self.player.upgrades, "joker_slots_bonus", self.player.upgrades.joker_slots_bonus+1)),
         ]
-        # pick 3: 2 jokers + 1 upgrade
-        chosen_jokers = self.rng.sample(joker_pool, min(2, len(joker_pool)))
+        # Shuffle the joker pool like a deck of cards
+        self.rng.shuffle(joker_pool)
+        # Draw the top jokers (up to 2)
+        chosen_jokers = joker_pool[:min(2, len(joker_pool))]
         for cls, kwargs, price, n, d in chosen_jokers:
             items.append(self.ShopItem("joker", n, d, price, factory=lambda c=cls, kw=kwargs: c(**kw), cls=cls))
-        up = self.rng.choice(up_pool)
-        items.append(self.ShopItem("upgrade", up[0], up[1], up[2], apply_upgrade=up[3]))
+        upgrade = self.rng.choice(upgrade_pool)
+        items.append(self.ShopItem("upgrade", upgrade[0], upgrade[1], upgrade[2], apply_upgrade=upgrade[3]))
         return items
 
     def build_shop_layout(self):
@@ -684,9 +746,12 @@ class App:
                         return
                     self.player.coins -= it.price
                     self.player.jokers.append(it.factory())
-                    if it.cls.__name__ not in self.bought_jokers:
-                        self.bought_jokers.append(it.cls.__name__)
-                        self.save_bought_jokers()
+                    # Remove the bought joker from the deck
+                    new_joker_deck = []
+                    for t in self.joker_deck:
+                        if t[0].__name__ != it.cls.__name__:
+                            new_joker_deck.append(t)
+                    self.joker_deck = new_joker_deck
                     self.message = f"Bought Joker: {it.name}"
                     # Remove the bought joker from the shop display
                     self.shop_items.remove(it)
@@ -708,18 +773,17 @@ class App:
         self.deck.build_standard()
         self.player.hand = Hand()
         self.player.jokers.clear()
-        self.bought_jokers.clear()
+        self.joker_deck = self.full_joker_pool.copy()  # Reset joker deck
         self.player.upgrades = Upgrades()
-        self.player.joker_slots = 5
+        self.player.joker_slots = 5 
         self.player.hand.max_size = self.player.effective_hand_size()
         self.player.score = 0
         self.player.coins = 0
         self.game.round_no = 1
-        self.game.rules = RoundRules(score_goal=get_blind_goal(1), hands_remaining=3, redraw_remaining=5)
+        self.game.rules = RoundRules(score_goal=get_blind_goal(1))
         self.shop_available = False
         self.selected.clear()
-        self.undo_stack.clear()  # clear undo stack on new run
-        self.message = "New run! Press D to deal."
+        self.message = "New run! Use Deal button to deal."
         self.game.mode = "PLAY"
 
     def deal_up_to_full(self):
@@ -727,7 +791,12 @@ class App:
         if need > 0:
             self.player.hand.add(self.deck.draw(need))
             self.sort_hand()
-            self.message = "Dealt cards. Click to select, R to redraw, P to play."
+            self.message = "Dealt cards. Click to select, use Redraw and Play buttons."
+            # Check if deck is empty and goal not reached
+            if not self.deck.cards and self.player.score < self.game.rules.score_goal:
+                self.game.mode = "GAMEOVER"
+                self.message = "Deck empty and goal not reached. You lose."
+                self.save_highscore()
         else:
             self.message = "Hand already full."
 
@@ -740,9 +809,6 @@ class App:
             self.message = "Select cards to discard (click)."
             return
         rects = self.layout_hand()
-        # start discard animation for selected
-        for i in self.selected:
-            self.anim_discard.append((rects[i].copy(), 0.5))  # 0.5s fly‑away
         removed = self.player.hand.remove_indices(sorted(self.selected))
         self.deck.toss(removed)
         draw_n = len(removed)
@@ -761,10 +827,6 @@ class App:
             self.message = "Need at least 1 card to play. Press D to draw."
             return
 
-        # Push current state to undo stack (LIFO)
-        self.undo_stack.append(self.get_state())
-        if len(self.undo_stack) > 10:
-            self.undo_stack.pop(0)  # limit stack size
 
         # เล่น 1–5 ใบ
         if not self.selected:
@@ -775,11 +837,6 @@ class App:
             return
         play_idxs = sorted(self.selected)
 
-        # แอนิเมชันก่อนทิ้ง
-        rects = self.layout_hand()
-        for i in play_idxs:
-            if 0 <= i < len(rects):
-                self.anim_discard.append((rects[i].copy(), 0.5))
 
         # ประเมินชุดไพ่เฉพาะที่เล่น
         played_cards = [self.player.hand.cards[i] for i in play_idxs]
@@ -797,8 +854,7 @@ class App:
         gained_coins = max(1, points // 10) + ctx.coins
         self.player.coins += gained_coins
 
-        # ป๊อปคะแนน
-        self.add_score_pop(f"{kind} +{points}", (W//2 - 60, TOP_Y - 40))
+
 
         # ทิ้งเฉพาะใบที่เล่น ไปที่ discard
         self.player.hand.remove_indices(play_idxs)
@@ -817,7 +873,7 @@ class App:
             self.shop_available = True
             self.open_shop()
         elif self.game.rules.hands_remaining == 0:
-            self.message += "  | Out of hands! You failed the goal. Press N to restart."
+            self.message += "  | Out of hands! You failed the goal. Use New Run button to restart."
             self.game.mode = "GAMEOVER"
             self.save_highscore()
 
@@ -834,15 +890,15 @@ class App:
         elif card.suit in ("♣"):
             col = BLUE
         else:
-            col = BLACK
+            col = PURPLE
         rank_surf = self.big.render(card.rank, True, col)
         suit_surf = self.big.render(card.suit, True, col)
         self.screen.blit(rank_surf, (rect.x + 12, rect.y + 12))
         self.screen.blit(suit_surf, (rect.x + 12, rect.y + 56))
-        code_surf = self.font.render(card.show(), True, WHITE)
-        self.screen.blit(code_surf, (rect.centerx - code_surf.get_width()//2, rect.centery))
+
 
     def draw_hud(self):
+        
         panel = pygame.Rect(40, 24, W-80, 220)
         pygame.draw.rect(self.screen, PANEL, panel, border_radius=18)
         t1 = self.big.render(f"Score: {self.player.score}", True, WHITE)
@@ -851,12 +907,16 @@ class App:
         t4 = self.font.render(f"Hands: {self.game.rules.hands_remaining}", True, WHITE)
         t5 = self.font.render(f"Redraws: {self.game.rules.redraw_remaining}", True, WHITE)
         t6 = self.big.render(f"Coins: {self.player.coins}", True, YELLOW)
+        t7 = self.font.render(f"Deck: {len(self.deck.cards)}", True, WHITE)
+        t8 = self.font.render(f"Jokers Slots: {len(self.player.jokers)}/{self.player.effective_joker_slots()}", True, WHITE)
         self.screen.blit(t1, (panel.x+20, panel.y+16))
         self.screen.blit(t2, (panel.x+20, panel.y+60))
         self.screen.blit(t3, (panel.x+20, panel.y+104))
         self.screen.blit(t4, (panel.x+240, panel.y+104))
         self.screen.blit(t5, (panel.x+420, panel.y+104))
         self.screen.blit(t6, (panel.x+20, panel.y+148))
+        self.screen.blit(t7, (panel.x+420, panel.y+148))
+        self.screen.blit(t8, (panel.x+240, panel.y+148))
         msg = self.small.render(self.message, True, MUTED)
         self.screen.blit(msg, (panel.x+20, panel.bottom - 28))
         # jokers list
@@ -874,7 +934,7 @@ class App:
             self.screen.blit(self.small.render(line, True, MUTED), (hsx, jy + 28 + i*20))
 
         # help
-        help_line = "Use buttons below or keys: N new | D deal | Click select | R redraw | P play | Q quit"
+        help_line = "Click select cards, use buttons for actions"
         s = self.small.render(help_line, True, MUTED)
         self.screen.blit(s, (40, H - 36))
 
@@ -914,7 +974,7 @@ class App:
         overlay.fill((0,0,0,160))
         self.screen.blit(overlay, (0,0))
         title = self.big.render("GAME OVER", True, RED)
-        info = self.font.render("Press N to start a new run", True, WHITE)
+        info = self.font.render("Use New Run button to start a new run", True, WHITE)
         self.screen.blit(title, (W//2 - title.get_width()//2, H//2 - 40))
         self.screen.blit(info, (W//2 - info.get_width()//2, H//2 + 8))
     def draw_deck(self):
@@ -934,8 +994,8 @@ class App:
         self.screen.blit(discard_text, (100, 180))
 
         # Group cards by suit and sort each group by rank descending
-        all_cards = list(self.deck.cards) + self.deck.discard
-        suit_groups = defaultdict(list)
+        all_cards = list(self.deck.cards)
+        suit_groups = DefaultDict(list)
         for card in all_cards:
             suit_groups[card.suit].append(card)
         y = 220
@@ -955,40 +1015,7 @@ class App:
         close_text = self.font.render("Close Deck", True, WHITE)
         self.screen.blit(close_text, (self.close_deck_button_rect.centerx - close_text.get_width()//2, self.close_deck_button_rect.centery - close_text.get_height()//2))
 
-    # ---------------------- Animations -----------------------
-    def update_anims(self, dt: float):
-        # discard fly‑away: move up and fade
-        new_discard = []
-        for rect, t in self.anim_discard:
-            t -= dt
-            if t > 0:
-                rect.y -= int(300 * dt)
-                rect.x += int(80 * dt)
-                new_discard.append((rect, t))
-        self.anim_discard = deque(new_discard)
 
-        new_score = []
-        for text, (x,y), t in self.anim_score:
-            t -= dt
-            if t > 0:
-                y -= int(100 * dt)
-                new_score.append((text, (x,y), t))
-        self.anim_score = deque(new_score)
-
-    def draw_anims(self):
-        # ghost cards
-        for rect, t in self.anim_discard:
-            alpha = max(0, min(255, int(255 * (t/0.5))))
-            surf = pygame.Surface((CARD_W, CARD_H), pygame.SRCALPHA)
-            surf.fill((*CARD_BG, alpha))
-            pygame.draw.rect(surf, (0,0,0,alpha), surf.get_rect(), width=2, border_radius=16)
-            self.screen.blit(surf, (rect.x, rect.y))
-        # score pops
-        for text, (x,y), t in self.anim_score:
-            a = max(0, min(255, int(255 * (t/1.0))))
-            surf = self.big.render(text, True, (255,255,255))
-            surf.set_alpha(a)
-            self.screen.blit(surf, (x, y))
 
     # ---------------------- Main Loop ------------------------
     def run(self):
@@ -997,23 +1024,6 @@ class App:
             for e in pygame.event.get():
                 if e.type == pygame.QUIT:
                     pygame.quit(); sys.exit(0)
-                if e.type == pygame.KEYDOWN:
-                    if e.key in (pygame.K_ESCAPE, pygame.K_q):
-                        pygame.quit(); sys.exit(0)
-                    elif e.key == pygame.K_n:
-                        self.new_run()
-                    elif e.key == pygame.K_d and self.game.mode == "PLAY":
-                        self.deal_up_to_full()
-                    elif e.key == pygame.K_r and self.game.mode == "PLAY":
-                        self.redraw()
-                    elif e.key == pygame.K_p and self.game.mode == "PLAY":
-                        # If currently below hand size, top up before play for convenience
-                        self.deal_up_to_full()
-                        self.play_hand()
-                    elif e.key == pygame.K_s:
-                        if self.game.mode == "SHOP":
-                            # closing shop applies new round rules
-                            self.close_shop()
                 if e.type == pygame.MOUSEBUTTONDOWN and e.button == 1:
                     # Check buttons first (always available)
                     for btn in self.buttons:
@@ -1033,7 +1043,6 @@ class App:
                         elif self.game.mode == "DECK":
                             self.click_deck(e.pos)
 
-            self.update_anims(dt)
 
             # draw
             self.screen.fill(BG)
@@ -1043,7 +1052,6 @@ class App:
             for i, c in enumerate(self.player.hand.cards):
                 self.draw_card(rects[i], c, i in self.selected)
 
-            self.draw_anims()
 
             if self.game.mode == "SHOP":
                 self.draw_shop()
